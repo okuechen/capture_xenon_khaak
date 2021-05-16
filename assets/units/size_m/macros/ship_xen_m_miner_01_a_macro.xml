@@ -1,0 +1,7 @@
+<?xml version="1.0" encoding="utf-8"?>
+
+<diff>
+  <add sel="/macros/macro[@name='ship_xen_m_miner_01_a_macro']/properties">
+    <gatherrate gas="8" />
+  </add>
+</diff>

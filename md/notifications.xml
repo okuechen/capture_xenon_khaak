@@ -1,0 +1,167 @@
+<?xml version="1.0" encoding="utf-8"?>
+
+<diff>
+  <add sel="//cue[@name='PlayerOwnedShipAttacks']/actions/do_if[@value='$target.iscapturable']" pos="before">
+    <set_value name="$capture_override" exact="false"/>
+    <do_if value="not $target.iscapitalship and ($target.owner == faction.xenon or $target.owner == faction.khaak)">
+      <set_value name="$capture_override" exact="true"/>
+    </do_if>
+  </add>
+
+  <add sel="//cue[@name='PlayerOwnedShipAttacks']/actions/do_if[@value='$target.iscapturable']" pos="after">
+    <remove_value name="$capture_override"/>
+  </add>
+
+  <replace sel="//cue[@name='PlayerOwnedShipAttacks']/actions/do_if[@value='$target.iscapturable']">
+    <do_if value="$capture_override or $target.iscapturable">
+      <do_if value="$capture_override">
+        <set_value name="$people_count" exact="1"/>
+        <set_value name="$people_capacity" exact="1"/>
+      </do_if>
+      <do_else>
+        <set_value name="$people_count" exact="$target.people.count"/>
+        <set_value name="$people_capacity" exact="$target.people.capacity"/>
+      </do_else>
+
+      <do_if value="event.name == 'event_cue_signalled'">
+        <set_value name="$Speak_Line" exact="5037" comment="(refusal to surrender - in danger)" />
+      </do_if>
+
+      <debug_text text="'bail: initial check: %s\nshieldpercentage: %s (threshold: 20)\nhullpercentage: %s (threshold: 75)\ndocked: %s\nis capitalship: %s\nhas crew: %s'.[(((not $target.maxshield) or ($target.shieldpercentage lt 20)) and ($target.hullpercentage lt 75) and not $target.assigneddock and (not $target.iscapitalship or $people_count)), $target.shieldpercentage, $target.hullpercentage, $target.assigneddock, $target.iscapitalship, $people_count]" chance="$debug? * 100"/>
+      
+      <do_if value="if not $testcheat? then (((not $target.maxshield) or ($target.shieldpercentage lt 20)) and ($target.hullpercentage lt 75) and not $target.assigneddock and (not $target.iscapitalship or $people_count)) else true">
+        <do_if value="not $target.pilot.$nextcapturechance?">
+          <set_value name="$target.pilot.$nextcapturechance" exact="player.age - 1s" />
+        </do_if>
+        <do_if value="if not $testcheat? then ($target.pilot.$nextcapturechance lt player.age) else true">
+          <do_if value="event.name != 'event_cue_signalled' or (($people_count)f / ($people_capacity)f) lt ((16 - $target.pilot.skill.morale)f / 16.0)">
+            <set_value name="$ejectchance" exact="( (46 - $target.combinedskill / 5) * [(($target.maxhull)f / [($attacker.maxhull)f, 1.0].max), 1.0].min * [(($attacker.shieldpercentage + $attacker.hullpercentage) / [($target.shieldpercentage + $target.hullpercentage), 1.0].max), 1.0].min )i"/>
+            <do_if value="$attacker != player.occupiedship">
+              <set_value name="$ejectchance" exact="$ejectchance / 4"/>
+            </do_if>
+            <do_if value="$target.iscapitalship or $capture_override">
+              <set_value name="$ejectchance" exact="$ejectchance / 2"/>
+            </do_if>
+            <debug_text text="player.age + ' %s %s %s attacking %s %s %s.\n eject chance %s. base: %s, hull class ratio: %s, current damage ratio: %s, attacker is player: %s'.[$attacker.idcode, $attacker.knownname, $attacker, $target.idcode, $target.knownname, $target, $ejectchance, 18 - $target.pilot.skill.morale, ($target.maxhull)f / ($attacker.maxhull)f, (($attacker.shieldpercentage + $attacker.hullpercentage) / ($target.shieldpercentage + $target.hullpercentage)), $attacker == player.occupiedship]" chance="$debug? * 100"/>
+
+            <do_if value="true" chance="if not $testcheat? then $ejectchance else 100">
+              <set_value name="$maxcrewbailing" exact="$people_count"/>
+              <do_if value="$target.isplayerowned">
+                <set_value name="$bail_role" exact="entityrole.service"/>
+                <do_if value="not $target.people.{entityrole.service}.{0}.count">
+                  <set_value name="$bail_role" exact="entityrole.marine"/>
+                </do_if>
+                <set_value name="$maxcrewbailing" exact="$target.people.{$bail_role}.{0}.count"/>
+              </do_if>
+
+              <do_if value="event.name == 'event_cue_signalled'">
+                <set_value name="$numcrewbailing" exact="$maxcrewbailing"/>
+              </do_if>
+              <do_else>
+                <!-- number of crew members that bail is proportional to the pilot's (later, the entire crew's) morale with a minimum of 1 crew member. capped to 3 at a time so that a ship with a bigger crew complement would have to bail more times before the ship is abandoned. -->
+                <set_value name="$numcrewbailing" exact="[[[($people_capacity * ((15 - $target.pilot.skill.morale)f / 15.0))i, $maxcrewbailing].min, 1].max, 3].min"/>
+              </do_else>
+
+              <do_if value="($numcrewbailing ge $people_count) and ($capture_override or not $target.iscapitalship) and not $target.isplayerowned and ($attacker.isplayerowned or @$attacker.signal.{'foundabandonedship'}.response.id == 'claim')">
+                <!-- pilot and remaining crew all bail -->
+                <set_value name="$pilotbail"/>
+                <set_value name="$damageminpercent" exact="100 - $target.pilot.combinedskill"/>
+                <do_if value="$attacker == player.occupiedship">
+                  <set_value name="$Speak_Line" exact="10034" />
+                </do_if>
+              </do_if>
+
+              <set_value name="$eject"/>
+            </do_if>
+
+            <do_if value="not @$pilotbail">
+              <!-- increment nextcapturechance regardless of whether any crew bails unless the pilot is set to bail, but only if ejectchance is actually evaluated. -->
+              <set_value name="$target.pilot.$nextcapturechance" exact="player.age + 30s" />
+              <debug_text text="'next chance ' + $target.pilot.$nextcapturechance" chance="$debug? * 100" />
+            </do_if>
+          </do_if>
+        </do_if>
+      </do_if>
+      
+      <do_if value="$Speak_Line? and ($target.owner != faction.xenon) and ($target.owner != faction.khaak)">
+        <do_if value="event.name == 'event_cue_signalled' and player.isinconversation">
+          <!-- Add NPC response for 'g_surrender' conversation section -->
+          <add_npc_line line="$Speak_Line"/>
+        </do_if>
+        <do_else>
+          <speak actor="$target.pilot" line="$Speak_Line" />
+        </do_else>
+      </do_if>
+
+      <do_if value="$eject?">
+        <debug_text text="'%s crew are about to bail from %s %s %s %s'.[$numcrewbailing, $target.class, $target.idcode, $target.knownname, $target]" chance="$debug? * 100"/>
+        <do_if value="$bail_role?">
+          <debug_text text="'bailing from %s %s %s.\nattacker: %s %s %s\nbailing: %s %s\nnum crew of role: %s'.[@$target.idcode, @$target.knownname, $target, @$attacker.idcode, @$attacker.knownname, $attacker, $numcrewbailing, $bail_role, $target.people.{$bail_role}.{0}.count]" chance="0"/>
+          <eject_people object="$target" attacker="$attacker" max="$numcrewbailing" role="$bail_role" level="0"/>
+        </do_if>
+        <do_else>
+          <eject_people object="$target" attacker="$attacker" max="$numcrewbailing"/>
+        </do_else>
+        <remove_value name="$numcrewbailing"/>
+
+        <do_if value="$pilotbail?">
+          <do_if value="$attacker.isplayerowned">
+            <substitute_text text="$logtext" source="{1016,79}" comment="Forced pilot to leave ship $SHIP$ in sector $SECTOR$.">
+              <replace string="'$SHIP$'" with="$target.knownname" />
+              <replace string="'$SECTOR$'" with="$target.pilot.sector.knownname" />
+            </substitute_text>
+            <write_to_logbook category="upkeep" title="$logtext" interaction="showonmap" object="$target"/>
+          </do_if>
+          <debug_text text="'pilot about to bail from %s %s %s %s'.[$target.class, $target.idcode, $target.knownname, $target]" chance="$debug? * 100"/>
+
+          <create_order id="'Wait'" object="$target" default="true">
+            <param name="allowdocked" value="not $target.iscapitalship"/>
+          </create_order>
+          <cancel_all_orders object="$target"/>
+          <do_all exact="$target.cargo.count" counter="$i" reverse="true">
+            <set_value name="$removedware" exact="$target.cargo.list.{$i}"/>
+            <set_value name="$removedmaxamount" exact="($target.cargo.{$removedware}.count * ($target.pilot.combinedskill / 100.0))i"/>
+            <debug_text text="'removing from %s to %s out of %s %s. combinedskill: %s'.[($removedmaxamount * 0.8)i, $removedmaxamount, $target.cargo.{$removedware}.count, $removedware.name, $target.pilot.combinedskill]" chance="$debug? * 100"/>
+            <remove_cargo object="$target" ware="$removedware" min="($removedmaxamount * 0.8)i" max="$removedmaxamount"/>
+          </do_all>
+          <cease_fire object="$target"/>
+
+          <do_if value="$capture_override">
+            <set_owner object="$target" faction="faction.player" overridenpc="true"/>
+          </do_if>
+          <do_else>
+            <eject_npcs object="$target"/>
+          </do_else>
+
+          <!-- it's important that integrated subcomponents are destroyed with no explosion. otherwise, they will leave wrecks that the game will not recognize. -->
+          <do_if value="$target.exists">
+            <!-- NB: scuttleeffect defined in defaults.xml -->
+            <add_effect object="$target" effect="$target.scuttleeffect"/>
+            <find_object_component name="$subcomponents" object="$target" class="[class.weapon, class.turret, class.shieldgenerator]" multiple="true"/>
+            <shuffle_list list="$subcomponents"/>
+            <do_all exact="[$subcomponents.count, $target.pilot.combinedskill / 20].min" counter="$i" reverse="true">
+              <debug_text text="'destroying %s'.[$subcomponents.{$i}.knownname]" chance="$debug? * 100"/>
+              <destroy_object object="$subcomponents.{$i}" explosion="false"/>
+              <remove_value name="$subcomponents.{$i}"/>
+            </do_all>
+          </do_if>
+
+          <do_if value="$attacker.isplayerowned">
+            <set_value name="stat.pilots_bailed" operation="add"/>
+          </do_if>
+
+          <!-- If khaak or xenon, signal the claim here -->
+          <do_if value="$capture_override">
+            <signal_objects object="player.entity" param="'ProcessClaimedShip'" param2="$target" param3="false" delay="10ms"/>
+          </do_if>
+
+          <remove_value name="$pilotbail"/>
+        </do_if>
+        <remove_value name="$eject"/>
+      </do_if>
+
+      <remove_value name="$people_count"/>
+      <remove_value name="$people_capacity"/>
+    </do_if>
+  </replace>
+</diff>
